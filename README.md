@@ -1,20 +1,21 @@
 # ESCO Occupation–Skill RAG
 
-RAG nhỏ trả lời câu hỏi về nghề nghiệp và kỹ năng, dựa trên dữ liệu ESCO
-(occupation ↔ skill) từ TalentCLEF. Mỗi occupation được gộp thành 1 document
-(essential + optional skills) trước khi embed và index.
+A small RAG (Retrieval-Augmented Generation) system that answers questions
+about occupations and skills, built on ESCO taxonomy data (occupation ↔
+skill) from TalentCLEF. Each occupation is merged into a single document
+(essential + optional skills) before embedding and indexing.
 
-## Cấu trúc
+## Structure
 
 ```
-config.py           # cấu hình đường dẫn, model, API key
-ingest.py           # bước 1: build documents.jsonl từ 3 file gốc
-index_store.py      # bước 2: embed + lưu vào ChromaDB (local, persistent)
-query.py            # bước 3: retrieval + generation (Gemini)
-generate_testset.py # sinh test set tự động từ documents.jsonl (sanity check)
-eval.py             # bước 4: đánh giá recall@k, MRR (có flag --rerank)
-diagnose_eval.py    # in chi tiết các câu retrieval đúng nhưng chưa top-1
-rerank.py           # module rerank bằng cross-encoder
+config.py           # paths, model, API key configuration
+ingest.py           # step 1: build documents.jsonl from the 3 raw files
+index_store.py      # step 2: embed + store in ChromaDB (local, persistent)
+query.py            # step 3: retrieval + generation (Gemini)
+generate_testset.py # auto-generate a test set from documents.jsonl (sanity check)
+eval.py             # step 4: evaluate recall@k, MRR (supports --rerank)
+diagnose_eval.py    # print detail for queries where the correct answer isn't top-1
+rerank.py           # cross-encoder reranking module
 ```
 
 ## Setup
@@ -23,128 +24,138 @@ rerank.py           # module rerank bằng cross-encoder
 pip install -r requirements.txt
 ```
 
-Đặt 3 file dữ liệu gốc vào thư mục `data/` (hoặc set biến môi trường
-`TALENTCLEF_DATA_DIR` trỏ tới thư mục chứa chúng):
+Place the 3 raw data files in a `data/` folder (or set the `TALENTCLEF_DATA_DIR`
+environment variable to point to the folder containing them):
 ```
 data/job2skill.tsv
 data/jobid2terms.json
 data/skillid2terms.json
 ```
 
-Set API key cho Gemini:
+Set your Gemini API key:
 ```bash
 export GEMINI_API_KEY="your-key-here"      # macOS/Linux
 $env:GEMINI_API_KEY = "your-key-here"      # PowerShell
 ```
 
-(Tùy chọn) Dùng embedding checkpoint đã fine-tune thay vì model gốc:
+(Optional) Use a fine-tuned embedding checkpoint instead of the base model:
 ```bash
 export EMBEDDING_MODEL="./models/mpnet-mnrl-finetuned"
 ```
 
-## Chạy pipeline
+## Running the pipeline
 
 ```bash
-# 1. Build documents từ dữ liệu gốc
+# 1. Build documents from the raw data
 python ingest.py
 
-# 2. Embed + index vào ChromaDB (chạy 1 lần, hoặc mỗi khi đổi embedding model)
+# 2. Embed + index into ChromaDB (run once, or whenever you change the embedding model)
 python index_store.py
 
-# 3. Hỏi đáp
-python query.py "Kỹ năng nào cần thiết cho technical director?"
+# 3. Ask a question
+python query.py "What skills are needed for a technical director?"
 ```
 
-## Đánh giá retrieval
+## Evaluating retrieval
 
-**Cách nhanh (tự động, sanity check):** sinh test set từ chính dữ liệu đã index —
-mỗi câu hỏi nhắm 1 occupation cụ thể, dùng để kiểm tra baseline retrieval hoạt
-động đúng cơ bản:
+**Quick way (automatic, sanity check):** generate a test set from the
+already-indexed data — each question targets one specific occupation, used
+to verify baseline retrieval works correctly:
 ```bash
 python generate_testset.py --n 30 --seed 42
 python eval.py test_questions.jsonl
 ```
 
-**Cách kỹ hơn (viết tay, cho báo cáo/CV):** tự viết câu hỏi đa dạng hơn
-(so sánh 2 job, câu hỏi mơ hồ, câu hỏi không có trong data...). Format:
+**More thorough way (hand-written, for a report/CV):** write more varied
+questions yourself (comparing two jobs, ambiguous questions, questions with
+no answer in the data...). Format:
 ```json
-{"question": "Kỹ năng nào cần cho technical director?", "relevant_ids": ["http://data.europa.eu/esco/occupation/00030d09-..."]}
+{"question": "What skills are needed for a technical director?", "relevant_ids": ["http://data.europa.eu/esco/occupation/00030d09-..."]}
 ```
 
-Chạy:
+Run:
 ```bash
 python eval.py test_questions.jsonl
 ```
 
-## Kết quả đánh giá (base vs fine-tuned embedding)
+## Evaluation results (base vs fine-tuned embedding)
 
-Test set: 30 câu hỏi tự sinh từ `generate_testset.py` (seed=42), mỗi câu
-nhắm đúng 1 occupation trong 3039 occupation đã index.
+Test set: 30 auto-generated questions from `generate_testset.py` (seed=42),
+each targeting exactly one occupation among the 3039 indexed.
 
 | Model | Mean Recall@5 | MRR |
 |---|---|---|
 | Base (`all-mpnet-base-v2`) | 0.7333 | 0.6750 |
-| Fine-tuned (MNRL trên ESCO occupation–skill pairs) | 1.0000 | 0.8778 |
+| Fine-tuned (MNRL on ESCO occupation–skill pairs) | 1.0000 | 0.8778 |
 | **Fine-tuned + cross-encoder rerank** (`ms-marco-MiniLM-L-6-v2`, pool_k=20) | **1.0000** | **0.9733** |
 
-Fine-tuning cải thiện Recall@5 tuyệt đối +26.7 điểm (+36% relative), MRR
-+0.20 (+30% relative). Toàn bộ 8 câu bị miss hoàn toàn ở model gốc — đều là
-occupation có tên hẹp/kỹ thuật, ít xuất hiện trong ngôn ngữ tự nhiên (vd.
-avionics technician, securities analyst, geotechnician, hand lasting
-operator, boom operator, scraper operator, rental manager) — đều được
-retrieve đúng sau fine-tune, dù một số câu MRR còn ở mức 0.33-0.5 (đúng
-nhưng chưa phải top-1, có thể cải thiện thêm bằng rerank).
+Fine-tuning improved Recall@5 by +26.7 absolute points (+36% relative) and
+MRR by +0.20 (+30% relative). All 8 questions completely missed by the base
+model were narrow/technical occupation titles rarely used in natural
+language (e.g. avionics technician, securities analyst, geotechnician, hand
+lasting operator, boom operator, scraper operator, rental manager) — all of
+them were correctly retrieved after fine-tuning, though some still had a
+lower MRR of 0.33–0.5 (correct but not top-1, further improvable with
+reranking).
 
-**Hạn chế đã ghi nhận:** câu hỏi tiếng Việt cho kết quả retrieval kém hơn
-hẳn tiếng Anh (cross-lingual gap) — model embedding hiện tại chỉ fine-tune
-trên dữ liệu tiếng Anh. Hướng khắc phục: dùng multilingual embedding model,
-hoặc dịch câu hỏi sang tiếng Anh trước khi retrieve.
+**Known limitation:** Vietnamese-language questions perform noticeably
+worse than English ones (cross-lingual gap) — the current embedding model
+was only fine-tuned on English data. Possible fixes: use a multilingual
+embedding model, or translate the question to English before retrieval.
 
-## Phân tích các case MRR thấp (đúng nhưng chưa top-1) + Rerank
+## Analyzing low-MRR cases (correct but not top-1) + Rerank
 
-Xem chi tiết candidate nào đang xếp trên đáp án đúng:
+See exactly which candidate is outranking the correct answer:
 ```bash
 python diagnose_eval.py test_questions.jsonl
 ```
 
-Thử cải thiện bằng cross-encoder rerank (retrieve top 20 rồi rerank
-xuống top 5 trước khi tính metric):
+Try improving this with cross-encoder reranking (retrieve top 20, then
+rerank down to top 5 before computing metrics):
 ```bash
 python eval.py test_questions.jsonl --rerank --pool-k 20
 ```
 
-So sánh Mean Recall@5 / MRR giữa 2 lần chạy (có/không `--rerank`) để biết
-rerank có đáng thêm vào pipeline production hay không — đánh đổi là mỗi
-query giờ tốn thêm 1 lượt gọi cross-encoder cho `pool_k` candidate,
-chậm hơn dense-only nhưng vẫn nhanh hơn nhiều so với gọi LLM.
+Compare Mean Recall@5 / MRR between the two runs (with/without `--rerank`)
+to decide whether reranking is worth adding to a production pipeline — the
+trade-off is that each query now costs one extra cross-encoder pass over
+`pool_k` candidates, slower than dense-only but still much faster than
+calling the LLM.
 
-**Kết quả thực tế:** rerank cải thiện MRR từ 0.8778 lên 0.9733 (+10.9%
-relative) — 6/7 case bị miss top-1 ở dense-only đều lên đúng top-1 sau
-rerank (avionics technician, securities analyst, tax compliance officer,
-geotechnician, hand lasting operator, satellite engineer-type cases).
+**Actual result:** reranking improved MRR from 0.8778 to 0.9733 (+10.9%
+relative) — 6 out of 7 cases that missed top-1 under dense-only retrieval
+reached top-1 after reranking (avionics technician, securities analyst, tax
+compliance officer, geotechnician, hand lasting operator, and one
+satellite-engineer-type case).
 
-**Nhưng có 1 case tệ hơn:** `import export manager` từ hạng 2 (RR=0.50)
-tụt xuống hạng 5 (RR=0.20) sau rerank. Nguyên nhân: các biến thể chuyên
-môn hóa của cùng occupation (`import export manager in fruit and
-vegetables`, `...in beverages`, `...in flowers and plants`) có nội dung
-skill gần như trùng lặp với bản gốc — cross-encoder, dù chính xác hơn
-dense embedding nói chung, vẫn không phân biệt được job tổng quát với
-job chuyên môn hóa hẹp khi text content quá giống nhau. Đây là giới hạn
-chung của semantic search (cả dense lẫn cross-encoder) chứ không phải lỗi
-implementation — hướng khắc phục thực sự cần thêm tín hiệu ngoài semantic
-(vd. ưu tiên exact/fuzzy match tên occupation, hoặc phân biệt theo cấu
-trúc phân cấp ESCO thay vì chỉ dựa vào nội dung skill).
+**But one case got worse:** `import export manager` dropped from rank 2
+(RR=0.50) to rank 5 (RR=0.20) after reranking. Reason: specialized variants
+of the same occupation (`import export manager in fruit and vegetables`,
+`...in beverages`, `...in flowers and plants`) have skill content almost
+identical to the generic title — the cross-encoder, while generally more
+accurate than dense embeddings, still can't distinguish a generic job title
+from a narrowly specialized one when the text content is nearly identical.
+This is a shared limitation of semantic search (both dense and
+cross-encoder), not an implementation bug — a real fix would need a signal
+beyond semantics (e.g. prioritizing exact/fuzzy title matching, or using
+the ESCO hierarchy instead of relying purely on skill content).
 
-Kết quả in ra recall@k và MRR — dùng để so sánh các phương án khác nhau
-(embedding model gốc vs fine-tuned, k khác nhau, có/không hybrid search, v.v.)
+## Future directions
 
-## Hướng mở rộng
+- **Hybrid search**: add BM25 (rank_bm25) alongside dense retrieval, merge
+  results (reciprocal rank fusion) — compare recall@k before/after.
+- **Rerank**: use a cross-encoder (e.g. `cross-encoder/ms-marco-MiniLM-L-6-v2`)
+  to rerank the top-20 candidates before passing the final top-5 into the prompt.
+- **Query rewriting**: expand the question with synonyms before embedding,
+  leveraging the `jobid2terms.json` / `skillid2terms.json` data itself.
+- **Agentic step**: add a "filter by skill category" or "compare two job
+  titles" tool — a stepping stone toward an AI agent.
 
-- **Hybrid search**: thêm BM25 (rank_bm25) song song với dense retrieval,
-  merge kết quả (reciprocal rank fusion) — so sánh recall@k trước/sau.
-- **Rerank**: dùng cross-encoder (vd. `cross-encoder/ms-marco-MiniLM-L-6-v2`)
-  để rerank top-20 candidates trước khi đưa 5 candidates cuối vào prompt.
-- **Query rewriting**: mở rộng câu hỏi bằng synonym trước khi embed, tận
-  dụng chính dữ liệu `jobid2terms.json` / `skillid2terms.json`.
-- **Agentic step**: thêm tool "filter theo skill category" hoặc "so sánh
-  2 job title" — bước đệm để nâng cấp thành AI agent.
+## Related work
+
+The embedding model used in this project was fine-tuned (MNRL on ESCO
+occupation–skill pairs) as part of **TalentCLEF 2026 Task B** (Job-Skill
+Matching with Skill Type Classification), CLEF 2026.
+
+- Paper (working notes, CEUR-WS): [paper477](https://clef-staging.pages.dev/paper477.pdf)
+- TalentCLEF overview: [Overview of the TalentCLEF 2026](https://www.emergentmind.com/papers/2606.31692)
