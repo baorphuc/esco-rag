@@ -1,0 +1,19 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Data & generated artifacts (không push data ESCO gốc + index + checkpoint nặng)
+data/
+documents.jsonl
+chroma_db/
+test_questions.jsonl
+
+# Model checkpoint (quá nặng cho git, để riêng hoặc dùng Git LFS / HuggingFace Hub)
+models/
+
+# Secrets
+.env
+
+# OS
+.DS_Store
