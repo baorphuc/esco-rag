@@ -42,6 +42,10 @@ $env:GEMINI_API_KEY = "your-key-here"      # PowerShell
 ```bash
 export EMBEDDING_MODEL="./models/mpnet-mnrl-finetuned"
 ```
+On Windows PowerShell, set the same option with:
+```powershell
+$env:EMBEDDING_MODEL = ".\models\mpnet-mnrl-finetuned"
+```
 
 ## Running the pipeline
 
@@ -55,6 +59,19 @@ python index_store.py
 # 3. Ask a question
 python query.py "What skills are needed for a technical director?"
 ```
+
+`CHROMA_DIR` and `COLLECTION_NAME` default to `./chroma_db` and
+`esco_occupations`. To reproduce a separate fine-tuned index without
+overwriting the base index:
+```powershell
+$env:CHROMA_DIR = ".\chroma_db_ft2"
+$env:EMBEDDING_MODEL = ".\models\sbert_finetuned_fixed"
+python index_store.py
+```
+The fine-tuned checkpoint must be a complete `SentenceTransformer` directory.
+The evaluation used a copy of the checkpoint from
+`D:\DataAProject\talentclef\models\sbert_finetuned`; keep the original
+checkpoint unchanged when repairing or testing its configuration.
 
 ## Evaluating retrieval
 
@@ -77,6 +94,18 @@ Run:
 ```bash
 python eval.py test_questions.jsonl
 ```
+
+To reproduce the fine-tuned results, keep `CHROMA_DIR` and `EMBEDDING_MODEL`
+set to the fine-tuned index/checkpoint, then run both retrieval modes:
+```powershell
+python eval.py test_questions.jsonl
+python eval.py test_questions.jsonl --rerank --pool-k 20
+python rerank_per_question.py test_questions.jsonl
+```
+The reference test set contains 30 questions and is generated with
+`python generate_testset.py --n 30 --seed 42`. Use a separate `CHROMA_DIR`
+for each embedding model; an index built with a different model must not be
+used for comparison.
 
 ## Evaluation results (base vs fine-tuned embedding)
 

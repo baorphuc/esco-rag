@@ -17,9 +17,12 @@ from config import (
     COLLECTION_NAME,
     EMBEDDING_MODEL,
     TOP_K_RETRIEVAL,
+    TOP_K_POOL,
     GEMINI_API_KEY,
     GEMINI_MODEL,
 )
+
+from rerank import rerank
 
 _embed_model = None
 _collection = None
@@ -101,12 +104,15 @@ def generate_answer(question: str, hits: list[dict]) -> str:
     return response.text
 
 
-def answer(question: str, k: int = TOP_K_RETRIEVAL, verbose: bool = True):
-    hits = retrieve(question, k)
+def answer(question: str, k: int = TOP_K_RETRIEVAL, verbose: bool = True, use_rerank: bool = True):
+    hits = retrieve(question, k=TOP_K_POOL if use_rerank else k)
+    if use_rerank:
+        hits = rerank(question, hits, top_k=k)
     if verbose:
         print("\n--- Retrieved ---")
         for h in hits:
-            print(f"  [{h['distance']:.4f}] {h['title']}")
+            score = f" rerank={h['rerank_score']:.3f}" if "rerank_score" in h else ""
+            print(f"  [{h['distance']:.4f}]{score} {h['title']}")
         print()
 
     answer_text = generate_answer(question, hits)
